@@ -1,0 +1,21 @@
+# CI for @usepulseapp/sdk-web.
+#
+# Builds + tests the web SDK on its own: the unit suite plus the dist-guard, which
+# asserts the built bundle is free of bundler internals and carries no secret material.
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm install
+      - run: npm run build         # tsup -> dist/ (required before the dist-guard test)
+      - run: npm test              # vitest (includes dist-guard.test.ts: no zod, no secrets)
+      - run: npm run typecheck     # tsc --noEmit against the inlined tsconfig

@@ -1,0 +1,50 @@
+{
+  "name": "@usepulseapp/sdk-web",
+  "version": "1.0.0",
+  "description": "Pulse analytics-only web SDK",
+  "type": "module",
+  "license": "MIT",
+  "author": "Pulse",
+  "keywords": [
+    "analytics",
+    "telemetry",
+    "sdk"
+  ],
+  "homepage": "https://github.com/usepulseapp/sdk-web",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/usepulseapp/sdk-web.git"
+  },
+  "bugs": {
+    "url": "https://github.com/usepulseapp/sdk-web/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "prepare": "tsup",
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "jsdom": "^26.1.0",
+    "tsup": "^8.3.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.2.4"
+  }
+}
