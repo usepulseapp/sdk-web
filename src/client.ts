@@ -49,7 +49,7 @@ export class PulseClient {
   private _externalUserId: string | undefined;
   private _sessionId: string = "";
   private _flushTimer: ReturnType<typeof setInterval> | undefined;
-  private _flushing: boolean = false;
+  private _inflightFlush: Promise<void> | null = null;
   private _unloadBound: boolean = false;
   private _onlineBound: boolean = false;
   private _visibilityBound: boolean = false;
@@ -225,30 +225,51 @@ export class PulseClient {
   /**
    * Flush the buffer via fetch. Respects the retry policy from the ingest route.
    * Always resolves (never rejects) so callers can fire-and-forget.
+   *
+   * Serialize-don't-drop: if a flush is already in flight, wait for it to
+   * finish, then run a follow-up pass for any events enqueued since its
+   * buffer snapshot. This preserves the public flush() contract — every event
+   * enqueued before the call gets at least one send attempt before the promise
+   * resolves. Fire-and-forget callers (timer, online event) benefit too: they
+   * queue behind the in-flight pass rather than silently no-op.
    */
   private async _flush(retryCount: number = 0): Promise<void> {
     if (this._disabled) return;
-    if (this._flushing) return; // prevent concurrent flushes
     if (!isBrowser()) return;
 
+    // Wait for any in-flight flush to finish before starting a new pass.
+    while (this._inflightFlush) await this._inflightFlush;
+
+    // Re-check after waiting — disable()/destroy() may have fired while we waited.
+    if (this._disabled) return;
+
+    // Re-load the buffer fresh: the prior pass may have drained the events we
+    // were going to send, so return early if there is nothing left to do.
     const events = bufferLoad();
     if (events.length === 0) return;
 
-    this._flushing = true;
     const context = this._buildContext();
 
-    try {
-      const chunks = chunkEvents(events, context);
-      for (const chunk of chunks) {
-        if (this._disabled) break; // may be disabled mid-flush (e.g. 404)
-        await this._sendChunkWithRetry(chunk, context, retryCount);
+    this._inflightFlush = (async () => {
+      try {
+        const chunks = chunkEvents(events, context);
+        for (const chunk of chunks) {
+          if (this._disabled) break; // may be disabled mid-flush (e.g. 404)
+          await this._sendChunkWithRetry(chunk, context, retryCount);
+        }
+      } catch {
+        // Unexpected error — swallow; events remain in buffer for next flush
+        if (this.opts.debug)
+          console.warn("[Pulse] Unexpected error during flush; events retained.");
+      } finally {
+        this._inflightFlush = null;
       }
-    } catch {
-      // Unexpected error — swallow; events remain in buffer for next flush
-      if (this.opts.debug) console.warn("[Pulse] Unexpected error during flush; events retained.");
-    } finally {
-      this._flushing = false;
-    }
+    })();
+
+    // _inflightFlush is already null again by the time this await resolves
+    // (the finally above runs first) — intentional: that is what lets the
+    // next queued waiter fall through the while-wait and start its own pass.
+    await this._inflightFlush;
   }
 
   private async _sendChunkWithRetry(

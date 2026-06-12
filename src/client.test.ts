@@ -887,6 +887,129 @@ describe("install event — attribution property coercion (W3)", () => {
   });
 });
 
+// ── Flush serialization regression — late-enqueued events must not be lost ───────
+//
+// Repro: init() fires auto-events and starts F1 immediately (fire-and-forget).
+// A track() call enqueues a 4th event after F1's buffer snapshot. With the old
+// boolean guard, a subsequent await flush() returned immediately (guard hit), so
+// in a Node-ish host the process could exit with the 4th event never attempted.
+
+describe("Flush serialization — late-enqueued events are not silently dropped", () => {
+  it("awaited flush() sends events enqueued AFTER an already-in-flight flush", async () => {
+    // Step 1: Set up a deferred fetch so we control when F1 (the auto-flush from
+    // init) completes.
+    let resolveF1!: (res: Response) => void;
+    const f1Promise = new Promise<Response>((resolve) => {
+      resolveF1 = resolve;
+    });
+
+    let fetchCallCount = 0;
+    const fetchBodies: string[] = [];
+    const mockFetch = vi.fn().mockImplementation((_url: string, init: RequestInit) => {
+      fetchCallCount++;
+      fetchBodies.push(init.body as string);
+      if (fetchCallCount === 1) {
+        // First call (F1 — from init's void this._flush()) stays pending
+        return f1Promise;
+      }
+      // Second call (F2 — from the awaited flush()) resolves immediately with 200
+      const body = JSON.parse(init.body as string) as {
+        events: Array<{ client_event_id: string }>;
+      };
+      const accepted = body.events.length;
+      return Promise.resolve(
+        new Response(JSON.stringify({ accepted, rejected: [] }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+    });
+    vi.stubGlobal("fetch", mockFetch);
+
+    // Step 2: init() with autoCapture=true fires install + app_open + session_start
+    // (3 events) and synchronously starts F1 (void this._flush()) which snapshots them.
+    const client = makeClient({ autoCapture: true });
+
+    // Step 3: track a 4th event AFTER F1's buffer snapshot.
+    client.track("late_event");
+
+    // Step 4: call flush() without awaiting yet, then immediately resolve F1 so the
+    // in-flight request finishes and the awaiting waiter can proceed.
+    const flushPromise = client.flush();
+
+    // Resolve F1 while the waiter is queued
+    resolveF1(
+      new Response(JSON.stringify({ accepted: 3, rejected: [] }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+
+    // Step 5: await the public flush() — must not resolve before the second request
+    await flushPromise;
+
+    // A second fetch must have been issued (F2, carrying late_event)
+    expect(fetchCallCount).toBe(2);
+
+    // The second request body must contain late_event
+    const secondBody = JSON.parse(fetchBodies[1]!) as { events: Array<{ event: string }> };
+    expect(secondBody.events.some((e) => e.event === "late_event")).toBe(true);
+
+    // late_event should now be cleared from the buffer (F2 returned 200)
+    expect(allBufferedEvents().some((e) => e.event === "late_event")).toBe(false);
+  });
+
+  it("awaited flush() does not resolve until the follow-up pass has been issued", async () => {
+    // Mirror of the above but asserting on the ORDER: the promise must not resolve
+    // while fetchCallCount is still 1.
+    let resolveF1!: (res: Response) => void;
+    const f1Promise = new Promise<Response>((resolve) => {
+      resolveF1 = resolve;
+    });
+
+    let fetchCallCount = 0;
+    const mockFetch = vi.fn().mockImplementation((_url: string, init: RequestInit) => {
+      fetchCallCount++;
+      if (fetchCallCount === 1) return f1Promise;
+      const body = JSON.parse(init.body as string) as { events: unknown[] };
+      const accepted = body.events.length;
+      return Promise.resolve(
+        new Response(JSON.stringify({ accepted, rejected: [] }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+    });
+    vi.stubGlobal("fetch", mockFetch);
+
+    const client = makeClient({ autoCapture: true });
+    client.track("late_event_2");
+
+    let flushResolved = false;
+    const flushPromise = client.flush().then(() => {
+      flushResolved = true;
+    });
+
+    // At this point F1 is still pending — flush() must NOT have resolved already.
+    // Yield the microtask queue once to let any synchronous no-op resolve propagate.
+    await Promise.resolve();
+    expect(flushResolved).toBe(false);
+
+    // Now resolve F1 and let F2 proceed.
+    resolveF1(
+      new Response(JSON.stringify({ accepted: 3, rejected: [] }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    await flushPromise;
+
+    // Only NOW should it have resolved, and only after F2 was issued.
+    expect(flushResolved).toBe(true);
+    expect(fetchCallCount).toBe(2);
+  });
+});
+
 // ── W1 regression: disable() during retry backoff stops further sendChunk calls ─
 
 describe("W1 regression — disable() aborts an in-flight retry chain", () => {

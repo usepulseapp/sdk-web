@@ -1,6 +1,6 @@
 {
   "name": "@usepulseapp/sdk-web",
-  "version": "1.0.0",
+  "version": "1.0.2",
   "description": "Pulse analytics-only web SDK",
   "type": "module",
   "license": "MIT",
@@ -42,6 +42,7 @@
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
+    "@types/node": "^22.10.0",
     "jsdom": "^26.1.0",
     "tsup": "^8.3.0",
     "typescript": "^5.7.0",
