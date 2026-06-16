@@ -6,13 +6,16 @@
 //     isEnabled, destroy.
 //   - assembleBatch(): pure, side-effect-free batch envelope builder. Exported
 //     for use by the conformance test suite without requiring a built dist/.
+//   - mountCancellationSurvey(): drop-in churn-survey UI (a later phase PR-E).
 //   - Public types: PulseOptions, Props, PropValue, BufferedEvent, BatchContext,
-//     BatchEnvelope, ReservedEventName, RESERVED_EVENT_NAMES, SDK_VERSION.
+//     BatchEnvelope, ReservedEventName, RESERVED_EVENT_NAMES, SDK_VERSION,
+//     CancellationSurveyTheme, CANCELLATION_SURVEY_OPTIONS.
 //
-// the telemetry spec §11, the wire contract.
+// the telemetry spec §11, §14, the wire contract, the design spec.
 
 import { PulseClient } from "./client.js";
 import type { PulseOptions, Props } from "./types.js";
+import { _registerCancelReason } from "./survey.js";
 
 // ── assembleBatch — re-exported from batch.ts (pure, no circular deps) ────────
 //
@@ -159,6 +162,11 @@ export function cancelReason(reason: string, properties?: Props): void {
   }
 }
 
+// Register cancelReason with the survey module so mountCancellationSurvey()'s
+// default emit path can call it without importing from index.ts (which would
+// create a parse-time circular execution issue since index.ts exports survey.ts).
+_registerCancelReason(cancelReason);
+
 /**
  * Force-flush the event buffer. Resolves when the flush attempt completes.
  * Safe to call without awaiting; never rejects.
@@ -232,3 +240,12 @@ export type {
 } from "./types.js";
 export { RESERVED_EVENT_NAMES, SDK_VERSION, PULSE_DEFAULT_API_HOST } from "./constants.js";
 export type { ReservedEventName } from "./constants.js";
+
+// ── Cancellation survey — a later phase PR-E ──────────────────────────────────────
+
+export { mountCancellationSurvey, CANCELLATION_SURVEY_OPTIONS } from "./survey.js";
+export type {
+  CancellationSurveyTheme,
+  CancellationSurveyOption,
+  CancellationSurveyMountOptions,
+} from "./survey.js";

@@ -55,18 +55,86 @@ Pulse.reset();
 
 All `init` options are optional:
 
-| Option            | Default                       | Purpose                                      |
-| ----------------- | ----------------------------- | -------------------------------------------- |
-| `environment`     | `"production"`                | `"test"` keeps dev traffic out of prod stats |
-| `apiHost`         | `https://api.usepulseapp.dev` | Override for tests or self-hosting           |
-| `flushIntervalMs` | `10000`                       | Batch flush cadence                          |
-| `sessionTimeoutMs`| `1800000`                     | Idle time before a new session (30 min)      |
-| `autoCapture`     | `true`                        | Auto install/app_open/session events         |
-| `disabled`        | `false`                       | Start opted-out (no network, no storage)     |
-| `maxBufferEvents` | `500`                         | Ring-buffer cap                              |
-| `debug`           | `false`                       | Console diagnostics                          |
+| Option             | Default                       | Purpose                                      |
+| ------------------ | ----------------------------- | -------------------------------------------- |
+| `environment`      | `"production"`                | `"test"` keeps dev traffic out of prod stats |
+| `apiHost`          | `https://api.usepulseapp.dev` | Override for tests or self-hosting           |
+| `flushIntervalMs`  | `10000`                       | Batch flush cadence                          |
+| `sessionTimeoutMs` | `1800000`                     | Idle time before a new session (30 min)      |
+| `autoCapture`      | `true`                        | Auto install/app_open/session events         |
+| `disabled`         | `false`                       | Start opted-out (no network, no storage)     |
+| `maxBufferEvents`  | `500`                         | Ring-buffer cap                              |
+| `debug`            | `false`                       | Console diagnostics                          |
 
 Runtime opt-out: `Pulse.disable()` / `Pulse.enable()` / `Pulse.isEnabled()`.
+
+## Cancellation survey
+
+`mountCancellationSurvey()` is a drop-in UI component that presents a reason
+picker to users who are cancelling, and emits a `cancel_reason` analytics event
+via the existing `cancelReason()` API. It never touches the purchase path.
+
+> **Note:** like every Pulse API, the survey emits nothing until `Pulse.init()` has
+> run — a submit before init is silently dropped (it fails closed: no event, no
+> error, no crash). Mount it from inside your cancel flow, by which point `init()`
+> has already run.
+
+**Modal (appended to `document.body`):**
+
+```ts
+import { mountCancellationSurvey } from "@usepulseapp/sdk-web";
+
+// Call this from inside your cancel flow — do NOT call it on page load.
+const survey = mountCancellationSurvey({
+  onSubmit(reason) {
+    console.log("reason emitted:", reason);
+    // Continue your cancel flow here.
+  },
+  onDismiss() {
+    // User skipped — no event was emitted.
+  },
+});
+
+// Programmatic teardown (e.g. if the parent view unmounts):
+survey.destroy();
+```
+
+**Inline (rendered inside your own container):**
+
+```ts
+const container = document.getElementById("cancel-survey-slot")!;
+mountCancellationSurvey({ container, onSubmit, onDismiss });
+```
+
+**Theming** — pass a `theme` object to override any of the CSS custom properties
+(`--pulse-cs-accent`, `--pulse-cs-text`, `--pulse-cs-muted`, `--pulse-cs-bg`,
+`--pulse-cs-border`, `--pulse-cs-font`, `--pulse-cs-radius`, `--pulse-cs-gap`):
+
+```ts
+mountCancellationSurvey({
+  theme: {
+    accent: "#7c3aed", // purple highlight
+    bg: "#1e1e2e", // dark background
+    text: "#cdd6f4",
+    muted: "#6c7086",
+    border: "#313244",
+    radius: "6px",
+  },
+  texts: {
+    title: "Before you go…",
+    submitLabel: "Send feedback",
+    dismissLabel: "No thanks",
+  },
+});
+```
+
+You can also override individual styles from your own CSS using the semantic
+class names (`pulse-cs-panel`, `pulse-cs-option`, `pulse-cs-btn--submit`, etc.)
+since they carry no specificity-inflating selectors.
+
+The option list and their emitted reason codes are exported as
+`CANCELLATION_SURVEY_OPTIONS` for building custom UIs against the same locked
+vocabulary without drift.
 
 ## Privacy
 
